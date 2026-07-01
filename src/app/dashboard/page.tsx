@@ -27,29 +27,27 @@ export default async function DashboardPage() {
   const isAdminOrManager = user.role === 'Super Admin' || user.role === 'Manager'
   const whereClause = isAdminOrManager ? undefined : { assignedCounselorId: user.id }
 
-  // 1. Get total leads and tasks
-  const totalLeads = await prisma.lead.count({ where: whereClause })
-  
-  const allTasks = await prisma.task.findMany({
-    where: isAdminOrManager ? undefined : { counselorId: user.id },
-    include: { lead: { select: { fullName: true } } },
-    orderBy: { dueDate: 'desc' } // fetch all tasks for history
-  })
+  // Execute all database queries concurrently to avoid sequential network latency (waterfall)
+  const [totalLeads, allTasks, rawRatings, rawStages] = await Promise.all([
+    prisma.lead.count({ where: whereClause }),
+    prisma.task.findMany({
+      where: isAdminOrManager ? undefined : { counselorId: user.id },
+      include: { lead: { select: { fullName: true } } },
+      orderBy: { dueDate: 'desc' } // fetch all tasks for history
+    }),
+    prisma.lead.groupBy({
+      by: ['rating'],
+      _count: true,
+      where: whereClause
+    }),
+    prisma.lead.groupBy({
+      by: ['stage'],
+      _count: true,
+      where: whereClause
+    })
+  ])
+
   const pendingCount = allTasks.filter(t => t.status === 'Pending').length
-
-  // 2. Get Grouped Ratings
-  const rawRatings = await prisma.lead.groupBy({
-    by: ['rating'],
-    _count: true,
-    where: whereClause
-  })
-
-  // 3. Get Grouped Stages
-  const rawStages = await prisma.lead.groupBy({
-    by: ['stage'],
-    _count: true,
-    where: whereClause
-  })
 
   // 4. Process Ratings Data
   const ratingsMap = new Map(rawRatings.map(r => [r.rating || 'Unrated', r._count]))
